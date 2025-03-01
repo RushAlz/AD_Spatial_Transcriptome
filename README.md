@@ -31,7 +31,7 @@
 
 [`Niches A-beta`](https://rushalz.github.io/AD_Spatial_Transcriptome/analysis/Abeta_LRcomparison_GM.html)
 
-[`Niches glia`](hhttps://rushalz.github.io/AD_Spatial_Transcriptome/analysis/GliaNetAbeta_LRcomparison_GM.html)
+[`Niches glia`](https://rushalz.github.io/AD_Spatial_Transcriptome/analysis/GliaNetAbeta_LRcomparison_GM.html)
 
 ------------------------------------------------------------------------
 
