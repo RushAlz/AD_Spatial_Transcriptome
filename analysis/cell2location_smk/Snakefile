@@ -1,0 +1,59 @@
+import os
+import glob
+from snakemake.io import *
+
+# Sub cell-type
+#reference_file = "resources/references/Tsai_reference/cellsubtypeSignatures.csv"
+#refFolder = "tsaiCellsubtype"
+
+# Major cell-type
+#reference_file = "resources/references/Tsai_reference/celltypeSignatures.csv"
+#refFolder = "tsaiCelltype"
+
+# Meninges
+reference_file = "resources/references/MeningesCellTypes/finecelltype_allgenes_plusTsaiSub.csv"
+refFolder = "MeningesCellTypes"
+
+input_path = "input/split_by_section_fix/"
+nuclei_file = "input/split_by_section_fix/avgNuclei_perSample.txt"
+
+output_path = "results/split_by_77sections_meningesfinecell_plusTsaiSub/"
+
+sample_sections = glob_wildcards('input/split_by_section_fix/{sample}_{section}_noMT_spatial_counts_matrix.csv')
+
+# SINGULARITY_NOHTTPS=1 singularity build cell2location-docker.sif docker-daemon://cell2location-docker:latest
+#container: "docker://ricardovialle/cell2location-docker"
+#containerized: "resources/cell2location-docker.sif"
+
+rule all:
+  input:
+    expand(output_path + "{sample}/{section}/" + refFolder + "/means_cell_abundance.csv", zip,
+    sample = sample_sections.sample, section = sample_sections.section)
+    #expand(output_path + "{sample}/{section}/" + refFolder + "/model.pt", zip,
+    #sample = sample_sections.sample, section = sample_sections.section),
+    #expand(output_path + "{sample}/{section}/" + refFolder + "/anndata.h5ad", zip,
+    #sample = sample_sections.sample, section = sample_sections.section),
+    #expand(output_path + "{sample}/{section}/" + refFolder + "/adata.h5ad", zip,
+    #sample = sample_sections.sample, section = sample_sections.section)
+
+rule cell2location:
+  input:
+    input_file = input_path + "{sample}_{section}_noMT_spatial_counts_matrix.csv",
+    nuclei_file = nuclei_file,
+    ref_dir = reference_file
+  output:
+    output_dir = directory(output_path + "{sample}/{section}/" + refFolder + "/"),
+    model = output_path + "{sample}/{section}/" + refFolder + "/model.pt",
+    anndata = output_path + "{sample}/{section}/" + refFolder + "/anndata.h5ad",
+    #adata = output_path + "{sample}/{section}/" + refFolder + "/adata.h5ad",
+    means_cell_abundance = output_path + "{sample}/{section}/" + refFolder + "/means_cell_abundance.csv"
+  params:
+    sample = "{sample}",
+    section = "{section}"
+  resources:
+    disk_mb=50000,
+    mem_mb=24000,
+    nvidia_gpu=1,
+    gpu_model="nvidia-tesla-v100"
+  script:
+    "scripts/cell2loc.py"

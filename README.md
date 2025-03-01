@@ -15,7 +15,23 @@
 | Subdirectory                                                               | Description                      |
 |-------------------------------|:----------------------------------------|
 | [`analysis/`](https://github.com/RushAlz/AD_Spatial_Transcriptome/tree/main/analysis/) | Code used in manuscript analysis |
-| [`data/`](https://github.com/RushAlz/AD_Spatial_Transcriptome/tree/main/data/)   | Data       |
+
+
+## Main scripts and functions
+
+[`Pseudo-bulk matrices`](https://github.com/RushAlz/AD_Spatial_Transcriptome/tree/main/analysis/MakePseudoBulk.Rmd)
+
+[`Seurat ST clustering`](https://github.com/RushAlz/AD_Spatial_Transcriptome/tree/main/analysis/Seurat_script.R)
+
+[`BayesSpace ST clustering`](https://github.com/RushAlz/AD_Spatial_Transcriptome/tree/main/analysis/BayesSpace_script.R)
+
+[`cell2location pipeline`](https://github.com/RushAlz/AD_Spatial_Transcriptome/tree/main/analysis/cell2location_smk/)
+
+[`LMM plaque Glia niche analysis`](https://github.com/RushAlz/AD_Spatial_Transcriptome/tree/main/analysis/plaqueGliaNicheContrastLMM/)
+
+[`Niches A-beta`](https://github.com/RushAlz/AD_Spatial_Transcriptome/tree/main/analysis/Abeta_LRcomparison_GM.html)
+
+[`Niches glia`](https://github.com/RushAlz/AD_Spatial_Transcriptome/tree/main/analysis/GliaNetAbeta_LRcomparison_GM.html)
 
 ------------------------------------------------------------------------
 

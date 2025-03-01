@@ -1,0 +1,854 @@
+---
+title: "ST NICHES"
+subtitle: "Glia-net LR comparison (GM only)"
+author:  |
+ | Rush Alzheimer’s Disease Center
+ | Chicago, IL 60612
+date: "`r Sys.Date()`"
+output: 
+ rmarkdown::html_document:
+   theme: united
+   highlight: tango
+   code_folding: hide
+   toc: true
+   toc_float: true
+   df_print: paged
+   smooth_scroll: true 
+   number_sections: false
+   self_contained: true  
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 100% !important;
+  margin: auto;
+}
+</style>
+
+```{css zoom-lib-src, echo = FALSE, eval = F}
+script src = "https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"
+```
+
+```{js zoom-jquery, echo = FALSE}
+ $(document).ready(function() {
+    $('body').prepend('<div class=\"zoomDiv\"><img src=\"\" class=\"zoomImg\"></div>');
+    // onClick function for all plots (img's)
+    $('img:not(.zoomImg)').click(function() {
+      $('.zoomImg').attr('src', $(this).attr('src')).css({width: '100%'});
+      $('.zoomDiv').css({opacity: '1', width: 'auto', border: '1px solid white', borderRadius: '5px', position: 'fixed', top: '50%', left: '50%', marginRight: '-50%', transform: 'translate(-50%, -50%)', boxShadow: '0px 0px 50px #888888', zIndex: '50', overflow: 'auto', maxHeight: '100%'});
+    });
+    // onClick function for zoomImg
+    $('img.zoomImg').click(function() {
+      $('.zoomDiv').css({opacity: '0', width: '0%'}); 
+    });
+  });
+```
+
+```{r clean.variables, echo=FALSE}
+# #This command clean all variables. BE CAREFULL!!! 
+# rm(list = setdiff(ls(), lsf.str()))
+```
+
+```{r load.packages, echo=FALSE, message=FALSE, results='hide', warning=FALSE}
+library(Seurat)
+library(tidyverse)
+library(janitor)
+library(ggplot2)
+library(ggpubr)
+library(ggsci)
+library(ggthemes)
+library(ggeasy)
+library(data.table)
+library(purrr)
+library(HGNChelper)
+library(downloadthis)
+library(NICHES)
+library(rstatix)
+
+knitr::opts_chunk$set( 
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE)
+```
+
+```{r Helper Functions, echo=FALSE}
+source("/pastel/Github_scripts/SpeakEasy_ST/docs/cell2location_results/secondPass/support_functions.R")
+```
+
+```{r echo=F}
+ADgene_list1 = read.table("/pastel/resources/gene_lists/lists_AD_relevant/GWAS_AD_Bel2022.txt", header = T)
+ADgene_list2 = read.table("/pastel/resources/gene_lists/lists_AD_relevant/HAM_down.txt", header = T)
+ADgene_list3 = read.table("/pastel/resources/gene_lists/lists_AD_relevant/HAM_up.txt", header = T)
+ADgene_list4 = read.table("/pastel/resources/gene_lists/lists_AD_relevant/PIG_orthologs.txt", header = T)
+ADgene_list = unique(c(ADgene_list1$symbol,ADgene_list2$GeneSymbol,ADgene_list3$GeneSymbol,ADgene_list4$symbol))
+ADgene_list.check = checkGeneSymbols(ADgene_list)
+ADgene_list = ADgene_list.check$x[ADgene_list.check$Approved]
+# length(ADgene_list) # 173 genes
+```
+
+```{r echo=F}
+work_dir = "/pastel/projects/spatial_t/NICHES"
+run_id = "231129"
+figDir_id = "240820"
+system(paste0("mkdir -p ",work_dir,"/",run_id))
+
+metadata_file = paste0(work_dir,"/../cell2location/UpdatedMetadataFeb23/ST_metadata_032723.withGenes.RData")
+load(metadata_file)
+
+spots_list = list("Meninges" = unique(metadata$V1[metadata$annotated_clusters %in% c("meninges")]),
+  "Blood Vessel" = unique(metadata$V1[metadata$annotated_clusters %in% c("Blood Vessel")]),
+  "White Matter" = unique(metadata$V1[metadata$annotated_clusters %in% c("WM")]),
+  "Grey Matter" = unique(metadata$V1[metadata$annotated_clusters %in% c("L1/Astrocytes","L2-3","L3-5","L5","L6")]))
+```
+
+```{r}
+cluster_colors_AB <- c("#8B63A6","#8B63A6","#d7301f","#d7301f","#0570b0","#0570b0") # purple, red, blue
+cluster_colors_glia <- c("#53B848","#53B848","#E8C51E","#E8C51E","#364eA1","#364eA1") # green, yellow, blue
+
+cluster_colors <- c("#0A7B83","#7ABAF2","#FFD265","#595959","#2AA876","#F19C65","#8B63A6","#607D8B","#ff5252","#4C1B1B","#fb9a99")
+new.cluster.ids <- c( "L5", "L3-5" ,"WM", "L1-5 Low UMI", "L2-3", "L6", "L1/Astrocytes",  "Meninges", "Blood Vessel", "Interneuron", "Mixed glia" )
+names(cluster_colors) = new.cluster.ids
+```
+
+## Load and combine stratification metadata
+
+```{r}
+load(paste0(work_dir,"/../cell2location/UpdatedMetadataFeb23/ST_metadata_032723.withGenes.RData"))
+# Denis classification
+library(readxl)
+data_prefix = "new_strats_062623"
+denis_strat = fread(paste0(work_dir,"/../cell2location/stratifications/new_strats_062623.csv"), sep = ",") %>% 
+  as.data.frame()
+#names(denis_strat) # "no_abeta_NEW"   "low_abeta_NEW"  "high_abeta_NEW" "low_RGN_neg"    "low_RGN_pos"    "high_RGN_neg"   "high_RGN_pos" 
+
+# Add stratifications to the metadata
+denis_strat_m = denis_strat %>% 
+  pivot_longer(cols = everything(), names_to = "strat", values_to = "barcode") %>% 
+  distinct()
+denis_strat_m$strat = gsub("_NEW","",denis_strat_m$strat)
+denis_strat_m$strat = gsub("abeta","Abeta",denis_strat_m$strat)
+denis_strat_m = bind_rows(denis_strat_m, 
+                          data.frame(strat = "RGN_neg", 
+                                     barcode = unique(c(denis_strat$low_RGN_neg, denis_strat$high_RGN_neg))))
+denis_strat_m = bind_rows(denis_strat_m, 
+                          data.frame(strat = "RGN_pos", 
+                                     barcode = unique(c(denis_strat$low_RGN_pos, denis_strat$high_RGN_pos))))
+
+metadata_with_strat = metadata %>% inner_join(denis_strat_m, by = c("V1"="barcode"))
+### Filter by GM only
+metadata_with_strat = metadata_with_strat[metadata_with_strat$brainRegion == "GM",]
+
+#table(metadata_with_strat$strat)
+message("Total number of spots: ", nrow(metadata_with_strat))
+message("Stratification groups: ", 
+        paste(names(table(metadata_with_strat$strat)), table(metadata_with_strat$strat), sep = " = ", collapse = "; "))
+```
+
+## Prepare gene expression data
+
+```{r}
+load(paste0(work_dir,"/230927/RGN_NICHES_PseudoBulk_GM.RData"))
+```
+
+## Make gene background
+
+```{r}
+niches_db = NICHES::LoadOmniPath("human")
+ligand_background = unique(na.omit(unlist(as.list(niches_db$source.subunits))))
+receptors_background = unique(na.omit(unlist(as.list(niches_db$target.subunits))))
+lr_background = unique(c(ligand_background,receptors_background))
+
+res_df = niches_df_norm$mat_counts %>% rownames_to_column("ligand_receptor")
+# Get gene background
+lr_sep = "—"
+res_df$ligand_receptor = gsub("\"","",res_df$ligand_receptor)
+res_df$ligand_receptor = gsub("HLA-","HLA/",res_df$ligand_receptor)
+res_df$ligand_receptor = gsub("EXOC3-","EXOC3/",res_df$ligand_receptor)
+res_df$ligand_receptor = gsub("PIK3CD-","PIK3CD/",res_df$ligand_receptor)
+res_df$ligand_receptor = gsub("IGKV1-","IGKV1/",res_df$ligand_receptor)
+res_df$ligand_receptor = gsub("KRTAP4-","KRTAP4/",res_df$ligand_receptor)
+
+fix_gene_names <- function(genelist){
+  genelist = gsub("HLA/","HLA-",genelist)
+  genelist = gsub("EXOC3/","EXOC3-",genelist)
+  genelist = gsub("PIK3CD/","PIK3CD-",genelist)
+  genelist = gsub("IGKV1/","IGKV1-",genelist)
+  genelist = gsub("KRTAP4/","KRTAP4-",genelist)
+  return(genelist)
+}
+
+background_genes = unique(unlist(str_split(res_df$ligand_receptor,lr_sep)))
+background_genes = unique(unlist(str_split(background_genes,"-")))
+background_genes = fix_gene_names(background_genes)
+
+library(HGNChelper)
+background_genes = background_genes[which(utf8::utf8_valid(background_genes))]
+#background_genes.check = checkGeneSymbols(background_genes)
+#background_genes.check[!background_genes.check$Approved,] # 7 invalid
+```
+
+```{r echo=F}
+analisys_wrapper <- function(counts, metadata_4deg, p_val_cutoff = 0.05, evcodes=F){
+  ########################################################################
+  # Filter genes and samples
+  #counts = niches_df_norm$mat_mean[,rownames(metadata_4deg_RGNpos_RGNneg_high)]
+  metadata_4deg = as.data.frame(metadata_4deg, check.names = F)
+  
+  counts_cpm <- as.data.frame(edgeR::cpm(counts))
+  keep.exp <- rowSums(counts_cpm > 1) >= (0.5 * ncol(counts_cpm) )
+  counts = counts[keep.exp,]
+  counts_cpm = counts_cpm[keep.exp,]
+  
+  column2drop = colSums(counts)==0
+  message("Dropping ", sum(column2drop), " sections with 0 library size")
+  counts = counts[,which(!column2drop)]
+  metadata_4deg = metadata_4deg[colnames(counts),]
+  
+  # Transform into log cpm
+  counts_log_cpm <- as.data.frame(edgeR::cpm(counts, log = TRUE))
+  
+  ########################################################################
+  # PCA
+  pca <- prcomp(t(counts_log_cpm), scale. = TRUE)
+  variances <- pca$sdev^2
+  explained <- variances / sum(variances)
+  
+  pca_data <- cbind(metadata_4deg, pca$x[, 1:5])
+  
+  # PC1 v. PC2 
+  pc1vpc2 <- ggplot(pca_data, aes(x = PC1, y = PC2, color = SpotSet)) +
+    geom_text(aes(label = SpotSet), size = 8, alpha = 0.5) +
+    labs(x = sprintf("PC%d (%.2f%%)", 1, round(explained[1] * 100, 2)),
+         y = sprintf("PC%d (%.2f%%)", 2, round(explained[2] * 100, 2))) +
+    theme(legend.position = "none")
+  
+  pc1vpc2_points <- ggplot(pca_data, aes(x = PC1, y = PC2, color = SpotSet)) +
+    geom_point(size = rel(3)) +
+    scale_color_discrete(name = "Spot stratification") +
+    labs(x = sprintf("PC%d (%.2f%%)", 1, round(explained[1] * 100, 2)),
+         y = sprintf("PC%d (%.2f%%)", 2, round(explained[2] * 100, 2))) +
+    theme(legend.position = c(0.35, 0.8),
+          legend.background = element_rect(color = "black", size = 1,
+                                           linetype = 1))
+  pc1vpc2_points
+  
+  ########################################################################
+  # DE
+  design <- model.matrix(~ SpotSet, data = metadata_4deg)
+  colnames(design)[1] <- "Intercept"
+  
+  y <- DGEList(counts)
+  y <- calcNormFactors(y)
+  
+  v1 <- voom(y, design, normalize.method = "quantile")
+  corfit1 <- duplicateCorrelation(v1, design, block = metadata_4deg$Bnum)
+  # corfit1$consensus
+  v2 <- voom(y, design, normalize.method = "quantile",
+             block = metadata_4deg$Bnum, correlation = corfit1$consensus)
+  corfit2 <- duplicateCorrelation(v2, design, block = metadata_4deg$Bnum)
+  # corfit2$consensus
+  
+  fit <- lmFit(v2, design, block = metadata_4deg$Bnum,
+               correlation = corfit2$consensus)
+  test <- eBayes(fit)
+  result <- topTable(test, coef = 2, number = nrow(counts))
+  ########################################################################
+  # VOLCANO
+  res_df_All = result
+  res_df_All$ligand_receptor = rownames(res_df_All)
+  res_df_All$P.adj = result$adj.P.Val
+  res_df_All = res_df_All[order(res_df_All$P.adj),]
+  res_df_All = na.omit(res_df_All)
+  
+  topList = res_df_All[p.adjust(res_df_All$P.adj, method = "fdr") <= 0.05,"ligand_receptor"]
+  matches <- unique(grep(paste(ADgene_list,collapse="|"), topList, value=TRUE))
+  
+  genes2show = unique(c(res_df_All[res_df_All$logFC<0,]$ligand_receptor[1:5],
+               res_df_All[res_df_All$logFC>0,]$ligand_receptor[1:5],
+               matches))
+  
+  p_volcano <- suppressWarnings(plot_volcano2(res = res_df_All, show_top_n_genes = 20, title = "RGN differential Ligand-Receptor",
+             adjP = T,
+             betaCol = "logFC",
+             pCol = "P.Value",
+             labelCol = "ligand_receptor",
+             genes2show = genes2show))
+  ########################################################################
+  # ENRICHMENT
+  enrich_res_LR = run_enrichments(res_df_All, 
+                               plot_title_label = "RGN differential L-R",
+                               beta_col = "logFC",
+                               pval_col = "P.adj",
+                               method = "ligand_receptor", 
+                               p_val_cutoff = p_val_cutoff, 
+                               ordered_query = F, 
+                               source2include = c("GO:CC","REAC","GO:MF","GO:BP"),
+                               evcodes = evcodes,
+                               top_n = 10,
+                               background_genes = lr_background)
+  enrich_res_LR$gprofile_df$model = "LR"
+  
+  enrich_res_L = run_enrichments(res_df_All, method = "ligand", 
+                               plot_title_label = "RGN differential L-R",
+                               beta_col = "logFC",
+                               pval_col = "P.adj",
+                               p_val_cutoff = p_val_cutoff, 
+                               ordered_query = F, 
+                               source2include = c("GO:CC","REAC","GO:MF","GO:BP"),
+                               evcodes = evcodes,
+                               top_n = 10,
+                               background_genes = ligand_background)
+  enrich_res_L$gprofile_df$model = "L"
+  
+  enrich_res_R = run_enrichments(res_df_All, method = "receptor", 
+                               plot_title_label = "RGN differential L-R",
+                               beta_col = "logFC",
+                               pval_col = "P.adj",
+                               p_val_cutoff = p_val_cutoff, 
+                               ordered_query = F, 
+                               source2include = c("GO:CC","REAC","GO:MF","GO:BP"),
+                               evcodes = evcodes, 
+                               top_n = 10,
+                               background_genes = receptors_background)
+  enrich_res_R$gprofile_df$model = "R"
+  
+  enrich_res = bind_rows(enrich_res_LR$gprofile_df,enrich_res_L$gprofile_df,enrich_res_R$gprofile_df)
+  
+  top_paths = enrich_res[enrich_res$source %in% c("GO:CC","REAC","GO:MF","GO:BP"),]
+  top_paths = top_paths[top_paths$isTop,
+                             c("term_name","logP","model","Direction")] 
+  top_paths$term_name = top_paths$term_name %>% str_trunc(50)
+  top_paths = top_paths[top_paths$logP > -log10(0.05),]
+  lr_test_plot = ggplot(top_paths, aes(x = model, y = term_name)) + 
+    geom_tile(aes(fill = logP), colour="black") + 
+    geom_text(aes(label = round(logP,digits = 1))) + 
+    scale_fill_distiller(name = expression(-log[10](P-value)), palette = "RdPu", direction = 1) + 
+    facet_grid(.~Direction, scales = "free_x", space = "free_x") + 
+    theme_classic() + xlab('') + ylab('') + 
+    theme(strip.text.x = element_text(size = 12, color = "black"), axis.text = element_text(size = 12, color = "black"))
+  ########################################################################
+  # TOP GENES
+  top_3 = rownames(res_df_All)[1:3]
+  counts_long = counts[top_3,] %>% 
+    rownames_to_column("ligand_receptor") %>% 
+    pivot_longer(cols = -ligand_receptor, names_to = "sampleID", values_to = "counts")
+  counts_long$sample_section = gsub("(.*?)_(.*?)_(.*)","\\1_\\2",counts_long$sampleID)
+  counts_long$SpotSet = gsub("(.*?)_(.*?)_(.*)","\\3",counts_long$sampleID)
+  top1 = ggplot(counts_long, aes(x = SpotSet, y = counts)) +
+    geom_boxplot(outlier.shape = NA) + ggbeeswarm::geom_quasirandom() + facet_wrap(~ligand_receptor) + theme_bw() +
+    labs(title = "Counts")
+  counts_long = counts_cpm[top_3,] %>% 
+    rownames_to_column("ligand_receptor") %>% 
+    pivot_longer(cols = -ligand_receptor, names_to = "sampleID", values_to = "counts")
+  counts_long$sample_section = gsub("(.*?)_(.*?)_(.*)","\\1_\\2",counts_long$sampleID)
+  counts_long$SpotSet = gsub("(.*?)_(.*?)_(.*)","\\3",counts_long$sampleID)
+  top2 = ggplot(counts_long, aes(x = SpotSet, y = counts)) +
+    geom_boxplot(outlier.shape = NA) + ggbeeswarm::geom_quasirandom() + facet_wrap(~ligand_receptor) + theme_bw() +
+    labs(title = "CPM")
+  counts_long = as.data.frame(v2$E[top_3,]) %>% 
+    rownames_to_column("ligand_receptor") %>% 
+    pivot_longer(cols = -ligand_receptor, names_to = "sampleID", values_to = "counts")
+  counts_long$sample_section = gsub("(.*?)_(.*?)_(.*)","\\1_\\2",counts_long$sampleID)
+  counts_long$SpotSet = gsub("(.*?)_(.*?)_(.*)","\\3",counts_long$sampleID)
+  top3 = ggplot(counts_long, aes(x = SpotSet, y = counts)) +
+    geom_boxplot(outlier.shape = NA) + ggbeeswarm::geom_quasirandom() + facet_wrap(~ligand_receptor) + theme_bw() +
+    labs(title = "Quantile-voom")
+  top_genes_plot = suppressWarnings(ggarrange(top1,top2,top3, ncol = 1, nrow = 3))
+  ######################################################################## 
+  res_list = list(
+    counts = counts,
+    counts_cpm = counts_cpm,
+    counts_log_cpm = counts_log_cpm,
+    counts_voom = as.data.frame(v2$E),
+    PCA_raw = pc1vpc2_points,
+    DE_result = res_df_All,
+    p_volcano = p_volcano,
+    enrich_res = enrich_res,
+    enrich_res_LR = enrich_res_LR,
+    enrich_res_L = enrich_res_L,
+    enrich_res_R = enrich_res_R,
+    lr_test_plot = lr_test_plot,
+    top_genes_plot = top_genes_plot
+  )
+  return(res_list)
+}
+```
+
+```{r}
+# Get expression matrices (pseudo-bulk)
+metadata_pseudo = distinct(niches_df_norm$long[,c("sample_section","Bnum","SpotSet","age","ad_reagan")]) %>% 
+  mutate(rowid = paste0(sample_section,"_",SpotSet)) %>% 
+  column_to_rownames("rowid")
+
+metadata_4deg_RGNpos_RGNneg = metadata_pseudo %>% filter(SpotSet %in% c("RGN_neg","RGN_pos"))
+metadata_4deg_RGNpos_RGNneg$SpotSet = factor(metadata_4deg_RGNpos_RGNneg$SpotSet, levels = c("RGN_neg","RGN_pos"))
+
+metadata_4deg_RGNpos_RGNneg_low = metadata_pseudo %>% filter(SpotSet %in% c("low_RGN_neg","low_RGN_pos"))
+metadata_4deg_RGNpos_RGNneg_low$SpotSet = factor(metadata_4deg_RGNpos_RGNneg_low$SpotSet, levels = c("low_RGN_neg","low_RGN_pos"))
+
+metadata_4deg_RGNpos_RGNneg_high = metadata_pseudo %>% filter(SpotSet %in% c("high_RGN_neg","high_RGN_pos"))
+metadata_4deg_RGNpos_RGNneg_high$SpotSet = factor(metadata_4deg_RGNpos_RGNneg_high$SpotSet, levels = c("high_RGN_neg","high_RGN_pos"))
+```
+
+```{r eval=F}
+res_mean_RGNpos_RGNneg = analisys_wrapper(
+  counts = niches_df_norm$mat_mean[,rownames(metadata_4deg_RGNpos_RGNneg)] , 
+  metadata_4deg = metadata_4deg_RGNpos_RGNneg, evcodes=T)
+
+res_mean_RGNpos_RGNneg_low = analisys_wrapper(
+  counts = niches_df_norm$mat_mean[,rownames(metadata_4deg_RGNpos_RGNneg_low)] , 
+  metadata_4deg = metadata_4deg_RGNpos_RGNneg_low, evcodes=T)
+
+res_mean_RGNpos_RGNneg_high = analisys_wrapper(
+  counts = niches_df_norm$mat_mean[,rownames(metadata_4deg_RGNpos_RGNneg_high)], 
+  metadata_4deg = metadata_4deg_RGNpos_RGNneg_high, evcodes=T)
+
+save(res_mean_RGNpos_RGNneg, file = paste0(work_dir,"/",run_id,"/res_mean_RGNpos_RGNneg_GM.RData"))
+save(res_mean_RGNpos_RGNneg_low, file = paste0(work_dir,"/",run_id,"/res_mean_RGNpos_RGNneg_low_GM.RData"))
+save(res_mean_RGNpos_RGNneg_high, file = paste0(work_dir,"/",run_id,"/res_mean_RGNpos_RGNneg_high_GM.RData"))
+```
+
+```{r}
+load(paste0(work_dir,"/",run_id,"/res_mean_RGNpos_RGNneg_GM.RData"))
+load(paste0(work_dir,"/",run_id,"/res_mean_RGNpos_RGNneg_low_GM.RData"))
+load(paste0(work_dir,"/",run_id,"/res_mean_RGNpos_RGNneg_high_GM.RData"))
+```
+
+## Correlation between DEs
+
+```{r fig.height=4.5, fig.width=5}
+res_df_model = res_mean_RGNpos_RGNneg$DE_result %>% mutate(model = "glia-high vs. glia-low")
+res_df_model = res_df_model %>% bind_rows(res_mean_RGNpos_RGNneg_low$DE_result %>% mutate(model = "glia-high vs. glia-low (low Abeta)"))
+res_df_model = res_df_model %>% bind_rows(res_mean_RGNpos_RGNneg_high$DE_result %>% mutate(model = "glia-high vs. glia-low (high Abeta)"))
+
+dups = res_df_model %>%
+  dplyr::group_by(ligand_receptor, model) %>%
+  dplyr::summarise(n = dplyr::n(), .groups = "drop") %>%
+  dplyr::filter(n > 1L)
+res_df_model = res_df_model[!res_df_model$ligand_receptor %in% unique(dups$ligand_receptor), ]
+tmp_df = res_df_model %>% pivot_wider(id_cols = ligand_receptor, names_from = model, values_from = t)
+
+cor_df = as.data.frame(cor(tmp_df[,-1],use = "pairwise.complete.obs", method = "pearson"))
+breaksList = seq(-1, 1, by = 0.01)
+
+pheatmap::pheatmap(cor_df, color=colorRampPalette(c(pal_aaas()(2)[2],"white",pal_aaas()(2)[1]))(length(breaksList)), 
+                   display_numbers = T, number_color = "black",
+                   main = "Correlation (t-statistics)", breaks = breaksList)
+```
+
+## Complete analysis
+
+## PCA
+
+```{r pca, fig.width=12, fig.height=4.5, eval=F}
+res_mean_RGNpos_RGNneg$PCA_raw + res_mean_RGNpos_RGNneg_low$PCA_raw + res_mean_RGNpos_RGNneg_high$PCA_raw
+```
+
+### DE
+
+```{r}
+rownames(res_df_model) = NULL
+res_df_model = res_df_model[order(res_df_model$adj.P.Val),]
+createDT(res_df_model)
+```
+
+```{r fig.width=8*3, fig.height=4.5, eval=F}
+ggarrange(res_mean_RGNpos_RGNneg$p_volcano + labs(title = "glia-high vs. glia-low"),
+  res_mean_RGNpos_RGNneg_low$p_volcano + labs(title = "glia-high vs. glia-low (low)"),
+  res_mean_RGNpos_RGNneg_high$p_volcano + labs(title = "glia-high vs. glia-low (high)"), ncol = 3)
+```
+
+### Top gene-pairs
+
+```{r fig.height=8, fig.width=8*3, eval=F}
+ggarrange(res_mean_RGNpos_RGNneg$top_genes_plot,
+  res_mean_RGNpos_RGNneg_low$top_genes_plot,
+  res_mean_RGNpos_RGNneg_high$top_genes_plot, ncol = 3, labels = c("All","Low","High"), hjust = -8)
+```
+
+## Enrichments
+
+```{r}
+enrichments_combined_df = bind_rows(res_mean_RGNpos_RGNneg$enrich_res %>% mutate(contrast = "RGNpos-RNGneg"),
+res_mean_RGNpos_RGNneg_low$enrich_res %>% mutate(contrast = "lowRGNpos-lowRNGneg"),
+res_mean_RGNpos_RGNneg_high$enrich_res %>% mutate(contrast = "highRGNpos-highRNGneg")) %>% 
+  arrange(-logP) %>%
+  select(contrast, Direction, source, term_name, p_value, precision, recall, model, intersection) %>% filter(model == "LR") 
+
+enrich_selected = read_xlsx(paste0(work_dir,"/../ST_NICHES_RGN_selected.xlsx"))
+enrich_selected = enrich_selected$term_name[enrich_selected$highlight=="T"]
+
+createDT(enrichments_combined_df[enrichments_combined_df$p_value<0.05,])
+```
+
+```{r fig.width=7, fig.height=4*3, warning=FALSE, message=FALSE, eval=F}
+suppressWarnings(ggarrange(res_mean_RGNpos_RGNneg$enrich_res_LR$enrich_p + labs(title = "glia-high vs. glia-low"),
+  res_mean_RGNpos_RGNneg_low$enrich_res_LR$enrich_p + labs(title = "glia-high vs. glia-low (low Abeta)"),
+  res_mean_RGNpos_RGNneg_high$enrich_res_LR$enrich_p + labs(title = "glia-high vs. glia-low (high Abeta)"), nrow = 3))
+```
+
+```{r fig.height=7, fig.width=5}
+#top_10_UP = enrichments_combined_df[enrichments_combined_df$Direction == "UP",]$term_name[1:5]
+#top_10_DOWN = enrichments_combined_df[enrichments_combined_df$Direction == "DOWN",]$term_name[1:5]
+#enrich_selected = unique(c(enrich_selected,top_10_UP,top_10_DOWN))
+
+enrichments_combined_df$highlight = enrichments_combined_df$term_name %in% enrich_selected
+
+absmax <- function(x) { x[which.max( abs(x) )]}
+absmin <- function(x) { x[which.min( abs(x) )]}
+
+# up_down_mtx = enrichments_combined_df[enrichments_combined_df$highlight,] %>% 
+#   filter(p_value <= 0.05) %>%
+#   mutate(signed_logP = ifelse(Direction=="DOWN",log10(p_value),-log10(p_value))) %>%
+#   dplyr::select(term_name,contrast,signed_logP,Direction) %>% distinct() %>%
+#   pivot_wider(id_cols = term_name, names_from = c(contrast,Direction), values_from = signed_logP) %>%
+#   column_to_rownames("term_name")
+# rg = max(abs(up_down_mtx),na.rm = T)
+# pheatmap(up_down_mtx, cluster_rows = F, cluster_cols = F, 
+#          color=colorRampPalette(c("navy", "white", "darkred"))(100),
+#          breaks = seq(-rg, rg, length.out = 100))
+
+enrich_selected_highlight_pval = enrichments_combined_df[enrichments_combined_df$highlight,] %>%
+  filter(p_value <= 0.05) %>%
+  dplyr::select(term_name,contrast,p_value) %>% distinct() %>%
+  pivot_wider(id_cols = term_name, names_from = contrast, values_from = p_value, values_fn = absmin) %>% 
+  column_to_rownames("term_name")
+enrich_selected_highlight_pval[is.na(enrich_selected_highlight_pval)] <- 2
+
+enrich_selected_highlight = enrichments_combined_df[enrichments_combined_df$highlight,] %>% 
+  filter(p_value <= 0.05) %>%
+  mutate(signed_logP = ifelse(Direction=="DOWN",log10(p_value),-log10(p_value))) %>%
+  dplyr::select(term_name,contrast,signed_logP) %>% distinct() %>%
+  pivot_wider(id_cols = term_name, names_from = contrast, values_from = signed_logP, values_fn = absmax) %>% 
+  column_to_rownames("term_name")
+
+enrich_selected_highlight_pval = enrich_selected_highlight_pval[,c("lowRGNpos-lowRNGneg","highRGNpos-highRNGneg","RGNpos-RNGneg")]
+enrich_selected_highlight = enrich_selected_highlight[,c("lowRGNpos-lowRNGneg","highRGNpos-highRNGneg","RGNpos-RNGneg")]
+colnames(enrich_selected_highlight)[colnames(enrich_selected_highlight)=="RGNpos-RNGneg"] = "glia-high vs. glia-low (All)"
+colnames(enrich_selected_highlight)[colnames(enrich_selected_highlight)=="lowRGNpos-lowRNGneg"] = "glia-high vs. glia-low (low AB)"
+colnames(enrich_selected_highlight)[colnames(enrich_selected_highlight)=="highRGNpos-highRNGneg"] = "glia-high vs. glia-low (high AB)"
+enrich_selected_highlight = as.matrix(enrich_selected_highlight)
+
+(enrich_heatmap = ComplexHeatmap::Heatmap(enrich_selected_highlight,
+                        cell_fun = function(j, i, x, y, width, height, fill) {
+                               if((enrich_selected_highlight_pval[i, j] <= 0.001)) {
+                                 grid.text("***", x, y, gp = gpar(fontsize = 8, fontfamily = "sans"))
+                               } else if((enrich_selected_highlight_pval[i, j] <= 0.01)) {
+                                 grid.text("**", x, y, gp = gpar(fontsize = 8, fontfamily = "sans"))
+                               } else if((enrich_selected_highlight_pval[i, j] <= 0.05)) {
+                                 grid.text("*", x, y, gp = gpar(fontsize = 8, fontfamily = "sans"))
+                               } else if((enrich_selected_highlight_pval[i, j] <= 0.1)) {
+                                 grid.text(".", x, y, gp = gpar(fontsize = 8, fontfamily = "sans"))
+                               }
+                          },
+                        na_col = "lightgrey", name = "Signed log10(P)",
+                        col = colorRamp2(c(-max(abs(enrich_selected_highlight),na.rm = T), -2,0,2,
+                                           max(abs(enrich_selected_highlight),na.rm = T)), 
+                                         rev(brewer.pal(n=7, name="RdBu"))[c(1,3,4,5,7)]),
+                        cluster_columns = F, cluster_rows = F, row_names_gp = gpar(fontsize = 9),
+                        column_names_gp = gpar(rotate = 45),
+                        row_names_side = "left", show_row_names = T,
+                        column_names_rot = 45,    rect_gp = gpar(col = "white", lwd = 0.1),
+                        row_names_max_width = max_text_width(rownames(enrich_selected_highlight), gp = gpar(fontsize = 9))))
+
+pdf(file = paste0(work_dir,"/Figures/",figDir_id,"_GliaNet_LR_enrichment_heatmap.pdf"), width = 5, height = 7)
+enrich_heatmap
+dev.off()
+```
+
+## Comparison between contrasts
+
+```{r}
+## Get only LR pairs with expression in example feature plot (B16002_4)
+LR_with_expression_in_example = niches_df_norm$long %>% filter(sample_section == "B16002_4") %>%
+  select(ligand_receptor, estimate_fraction) %>%
+  distinct() %>% filter(estimate_fraction > 100)
+LR_with_expression_in_example = unique(LR_with_expression_in_example$ligand_receptor)
+```
+
+```{r}
+res_combined = res_mean_RGNpos_RGNneg_low$DE_result[,c("ligand_receptor","t","P.adj")] %>%
+  inner_join(res_mean_RGNpos_RGNneg_high$DE_result[,c("ligand_receptor","t","P.adj")], 
+             suffix = c(".low",".high"), 
+             by = "ligand_receptor") 
+
+res_combined = na.omit(res_combined)
+res_combined$color = "NS"
+res_combined$color[res_combined$P.adj.low<=0.05 & res_combined$P.adj.high<=0.05] = "Both Signf"
+res_combined$color[res_combined$P.adj.low<=0.05 & res_combined$P.adj.high>0.05] = "glia-high vs. glia-low (low AB) only"
+res_combined$color[res_combined$P.adj.low>0.05 & res_combined$P.adj.high<=0.05] = "glia-high vs. glia-low (high AB) only"
+res_combined$color = factor(res_combined$color, 
+                            levels = c("Both Signf",
+                                       "glia-high vs. glia-low (low AB) only",
+                                       "glia-high vs. glia-low (high AB) only",
+                                       "NS"))
+
+
+res_combined = res_combined[order(rowMeans(res_combined[,c("P.adj.high","P.adj.low")])), ]
+
+topList = res_combined[res_combined$color == "Both Signf","ligand_receptor"]
+completeList = res_combined[res_combined$color != "NS","ligand_receptor"]
+completeList = unique(completeList[completeList %in% LR_with_expression_in_example])
+
+matches <- unique(grep(paste(ADgene_list,collapse="|"), completeList, value=TRUE))
+
+enrichments_combined_df_signif = enrichments_combined_df[enrichments_combined_df$p_value<=0.05,]
+genes_l1 = paste(unlist(enrichments_combined_df_signif[grep("autophagy",tolower(enrichments_combined_df_signif$term_name)),]$intersection),collapse = ",")
+genes_l1 = unique(str_split(genes_l1,",")[[1]])
+print(paste0("autophagy: ",paste0(genes_l1,collapse = ";")))
+
+genes_l2 = paste(unlist(enrichments_combined_df_signif[grep("ion binding",tolower(enrichments_combined_df_signif$term_name)),]$intersection),collapse = ",")
+genes_l2 = unique(str_split(genes_l2,",")[[1]])
+print(paste0("ion binding: ",paste0(genes_l2,collapse = ";")))
+
+genes_l3 = paste(unlist(enrichments_combined_df_signif[grep("vesicle",tolower(enrichments_combined_df_signif$term_name)),]$intersection),collapse = ",")
+genes_l3 = unique(str_split(genes_l3,",")[[1]])
+print(paste0("vesicle: ",paste0(genes_l3,collapse = ";")))
+
+genes_l4 = paste(unlist(enrichments_combined_df_signif[grep("cell adhesion",tolower(enrichments_combined_df_signif$term_name)),]$intersection),collapse = ",")
+genes_l4 = unique(str_split(genes_l4,",")[[1]])
+print(paste0("cell adhesion: ",paste0(genes_l4,collapse = ";")))
+
+genes_l5 = paste(unlist(enrichments_combined_df_signif[grep("cell migration",tolower(enrichments_combined_df_signif$term_name)),]$intersection),collapse = ",")
+genes_l5 = unique(str_split(genes_l5,",")[[1]])
+print(paste0("cell migration: ",paste0(genes_l5,collapse = ";")))
+
+genes_l6 = paste(unlist(enrichments_combined_df_signif[grep("myelination",tolower(enrichments_combined_df_signif$term_name)),]$intersection),collapse = ",")
+genes_l6 = unique(str_split(genes_l6,",")[[1]])
+print(paste0("myelination: ",paste0(genes_l6,collapse = ";")))
+
+genes_fig5 = c("AQP4","SPARC","C3AR1","SYT2","GABRD","PVALB","SCN1B","EEF1A1","RORB","ALDH1A3","TRIM22","SEMA3C","CD68","SERPINE2","ZNF561")
+
+genes_from_pathways = unique(c(genes_l1,genes_l2,genes_l3,genes_l4,genes_l5,genes_l6,genes_fig5))
+# top_n = 2
+# genes_from_pathways = unique(c(genes_l1[1:top_n],genes_l2[1:top_n],genes_l3[1:top_n],genes_l4[1:top_n],genes_l5[1:top_n],genes_l6[1:top_n],genes_fig5[1:top_n]))
+matches_from_pathways <- unique(grep(paste(genes_from_pathways,collapse="|"), completeList, value=TRUE))
+ 
+genes2show = unique(c(matches_from_pathways))
+
+#gene_list = c("SPARC—ENG","GFAP—APLNR","RPH3A—NRXN1","APP—TSPAN15","SEMA6D—PLXNC1","CLU—TREM2","APOE—LDLR","DSCAM—DCC")
+gene_list = c(
+  "SPARC—ENG", # ;vesicle;cell adhesion;cell migration;Fig5
+  "GFAP—APLNR", # ;vesicle;cell adhesion;cell migration;AD genes
+  "RPH3A—NRXN1", # ;cell adhesion
+  "APP—TSPAN15", # ;vesicle;AD genes
+  "SEMA6D—PLXNC1", # ;vesicle;cell adhesion;cell migration;AD genes
+  "CLU—TREM2", # ;ion binding;cell adhesion;cell migration;AD genes
+  "APOE—LDLR", # ;vesicle;cell adhesion;cell migration;AD genes
+  "DSCAM—DCC", # ;cell adhesion;cell migration
+  "PLXNA1—TREM2", # ;vesicle;cell adhesion;cell migration;myelination;AD genes
+  "TGFB1—ITGAV", # ;cell adhesion;myelination
+  "TNFRSF14—LRFN5", # ;autophagy;cell adhesion;cell migration
+  "ADAM15—ITGAV", # ;autophagy;ion binding;cell adhesion;cell migration
+  "GNB3—GABBR2",
+  "RIMS1—SLC17A7",
+  "CXCL16—GRM7",
+  "APLN—GRM7",
+  "CCL28—GRM7",
+  "CORT—GRM7"
+  )
+
+topList1 = res_combined[res_combined$color == "Both Signf","ligand_receptor"]
+topList2 = res_combined[res_combined$color == "glia-high vs. glia-low (low AB) only","ligand_receptor"]
+topList3 = res_combined[res_combined$color == "glia-high vs. glia-low (high AB) only","ligand_receptor"]
+topList4 = res_combined[res_combined$color != "NS" & res_combined$t.low<0 & res_combined$t.high>0,"ligand_receptor"]
+topList5 = res_combined[res_combined$color == "glia-high vs. glia-low (low AB) only" & res_combined$t.low>0,"ligand_receptor"]
+genes2show = unique(c(gene_list,topList1[1:2],topList2[1:3],topList3[1:3],topList4[1:6],topList5[1]))
+```
+
+```{r fig.width=8, fig.height=6}
+res_combined$gene2label = ""
+res_combined$gene2label[res_combined$ligand_receptor %in% genes2show] = res_combined$ligand_receptor[res_combined$ligand_receptor %in% genes2show]
+res_combined$gene2label = gsub("—","-",res_combined$gene2label)
+
+cluster_colors_AB <- c("#8B63A6","#8B63A6","#d7301f","#d7301f","#0570b0","#0570b0") # purple, red, blue
+cluster_colors_glia <- c("#53B848","#53B848","#E8C51E","#E8C51E","#364eA1","#364eA1") # green, yellow, blue
+
+signif_colors = setNames(rev(c("grey","#364eA1","#E8C51E","#53B848")), levels(res_combined$color))
+
+(scatter_p = ggplot(res_combined, aes(x = t.low, y = t.high)) +
+  geom_abline(color = "darkgray", linetype = "dashed") +
+  geom_point(alpha = 0.25, aes(color = color), 
+             show.legend = T) +
+  geom_text_repel(aes(label = gene2label, color = color), 
+                  show.legend = F, segment.alpha = .3,
+                  max.overlaps = Inf, size = 3.5, force = 10, 
+                  fontface = "bold.italic") +
+  scale_color_manual(values = signif_colors) +
+  stat_cor(method = "pearson", size = 4.5) +
+  theme_test(base_size = 13) +
+  guides(color = 
+           guide_legend(label.position = "left", 
+                        label.hjust = 1, 
+                        override.aes = list(size = 4, alpha = 1, fill = NA))) +
+  theme(legend.position = c(0.8, 0.12),
+        legend.title.align = 1, 
+        legend.background=element_rect(fill = alpha("white", 0)),
+        legend.key.size = unit(0.45, "cm")) +
+labs(x = "glia-high vs. glia-low (low AB) (t-statistics)", 
+     y = "glia-high vs. glia-low (high AB) (t-statistics)", 
+     title = "",
+     color = "Significance"))
+
+
+save(res_combined, file = paste0(work_dir,"/Figures/",figDir_id,"_GliaNet_LR_combined_results.RData"))
+
+pdf(file = paste0(work_dir,"/Figures/",figDir_id,"_GliaNet_LR_low_high_scatter.pdf"), width = 8, height = 6)
+scatter_p
+dev.off()
+```
+
+### Examples of LR pairs
+
+```{r}
+res_combined_sel = res_combined %>% filter(gene2label != "")
+res_combined_sel$source = ""
+res_combined_sel$source[grep(paste(genes_l1,collapse="|"),res_combined_sel$gene2label)] = paste0(res_combined_sel$source[grep(paste(genes_l1,collapse="|"),res_combined_sel$gene2label)],";autophagy")
+res_combined_sel$source[grep(paste(genes_l2,collapse="|"),res_combined_sel$gene2label)] = paste0(res_combined_sel$source[grep(paste(genes_l2,collapse="|"),res_combined_sel$gene2label)],";ion binding")
+res_combined_sel$source[grep(paste(genes_l3,collapse="|"),res_combined_sel$gene2label)] = paste0(res_combined_sel$source[grep(paste(genes_l3,collapse="|"),res_combined_sel$gene2label)],";vesicle")
+res_combined_sel$source[grep(paste(genes_l4,collapse="|"),res_combined_sel$gene2label)] = paste0(res_combined_sel$source[grep(paste(genes_l4,collapse="|"),res_combined_sel$gene2label)],";cell adhesion")
+res_combined_sel$source[grep(paste(genes_l5,collapse="|"),res_combined_sel$gene2label)] = paste0(res_combined_sel$source[grep(paste(genes_l5,collapse="|"),res_combined_sel$gene2label)],";cell migration")
+res_combined_sel$source[grep(paste(genes_l6,collapse="|"),res_combined_sel$gene2label)] = paste0(res_combined_sel$source[grep(paste(genes_l6,collapse="|"),res_combined_sel$gene2label)],";myelination")
+res_combined_sel$source[grep(paste(genes_fig5,collapse="|"),res_combined_sel$gene2label)] = paste0(res_combined_sel$source[grep(paste(genes_fig5,collapse="|"),res_combined_sel$gene2label)],";Fig5")
+res_combined_sel$source[grep(paste(ADgene_list,collapse="|"),res_combined_sel$gene2label)] = paste0(res_combined_sel$source[grep(paste(ADgene_list,collapse="|"),res_combined_sel$gene2label)],";AD genes")
+createDT(res_combined_sel)
+```
+
+```{r}
+gene_list2 = c("GFAP-APLNR",
+                    "SPARC-ENG",
+                    "CLU-TREM2",
+                    "RPH3A-NRXN1",
+                    "APP-TSPAN15",
+                    "PLXNA1-TREM2",
+                    "DSCAM-DCC",
+                    "TGFB1-ITGAV",
+                    "APOE-LDLR",
+               "GNB3—GABBR2",
+               "RIMS1—SLC17A7",
+               "CXCL16—GRM7")
+gene_list2 = gsub("-","—",gene_list2)
+
+library(tidyverse)
+library(data.table)
+library(reshape2)
+prep4boxplot = function(counts_voom,contrast = ""){
+  pseudo_bulk_mtx = counts_voom %>% as.data.frame()
+  mtx_1_long = setNames(melt(as.matrix(pseudo_bulk_mtx)),c("gene","sample","expression")) %>% 
+    mutate(strat = gsub("(.*?)_(.*?)_(.*)","\\3",sample),
+           sample_section = gsub("(.*?)_(.*?)_(.*)_(.*)","\\1_\\2",sample))
+  mtx_1_long$contrast = contrast
+  return(mtx_1_long)
+}
+mtx_voom_long = bind_rows(prep4boxplot(res_mean_RGNpos_RGNneg$counts_voom, contrast = "glia-high vs. glia-low (combined)"),
+  prep4boxplot(res_mean_RGNpos_RGNneg_low$counts_voom, contrast = "glia-high vs. glia-low (low AB)"),
+  prep4boxplot(res_mean_RGNpos_RGNneg_high$counts_voom, contrast = "glia-high vs. glia-low (high AB)"))
+
+mtx_voom_long2plot_Pvalues = res_df_model %>%
+  dplyr::filter(ligand_receptor %in% gene_list2) %>%
+  select(ligand_receptor,P.adj,model) %>%
+  pivot_wider(names_from = model,values_from = P.adj)
+colnames(mtx_voom_long2plot_Pvalues)[colnames(mtx_voom_long2plot_Pvalues) == "glia-high vs. glia-low"] = "combined"
+colnames(mtx_voom_long2plot_Pvalues)[colnames(mtx_voom_long2plot_Pvalues) == "glia-high vs. glia-low (high Abeta)"] = "high AB"
+colnames(mtx_voom_long2plot_Pvalues)[colnames(mtx_voom_long2plot_Pvalues) == "glia-high vs. glia-low (low Abeta)"] = "low AB"
+mtx_voom_long2plot_Pvalues_long = mtx_voom_long2plot_Pvalues %>%
+  pivot_longer(cols = -ligand_receptor, names_to = "contrast", values_to = "P.adj")
+
+mtx_voom_long2plot = mtx_voom_long %>% 
+  dplyr::filter(gene %in% gene_list2) 
+
+mtx_voom_long2plot$strat[mtx_voom_long2plot$strat=="RGN_neg"] <- "glia-low (combined)"
+mtx_voom_long2plot$strat[mtx_voom_long2plot$strat=="RGN_pos"] <- "glia-high (combined)"
+mtx_voom_long2plot$strat[mtx_voom_long2plot$strat=="low_RGN_neg"] <- "glia-low (low AB)"
+mtx_voom_long2plot$strat[mtx_voom_long2plot$strat=="low_RGN_pos"] <- "glia-high (low AB)"
+mtx_voom_long2plot$strat[mtx_voom_long2plot$strat=="high_RGN_neg"] <- "glia-low (high AB)"
+mtx_voom_long2plot$strat[mtx_voom_long2plot$strat=="high_RGN_pos"] <- "glia-high (high AB)"
+
+mtx_voom_long2plot$contrast = gsub("(.*) \\((.*)\\)","\\2",mtx_voom_long2plot$contrast)
+mtx_voom_long2plot$contrast_strat = paste0(mtx_voom_long2plot$contrast,"_",mtx_voom_long2plot$strat)
+
+mtx_voom_long2plot$contrast_strat_labels = gsub("(.*)_(.*) \\((.*)","\\2",mtx_voom_long2plot$contrast_strat)
+contrast_strat_labels = mtx_voom_long2plot$contrast_strat_labels
+names(contrast_strat_labels) = mtx_voom_long2plot$contrast_strat
+
+cluster_colors_AB <- c("#8B63A6","#8B63A6","#d7301f","#d7301f","#0570b0","#0570b0") # purple, red, blue
+cluster_colors_glia <- c("#53B848","#53B848","#E8C51E","#E8C51E","#364eA1","#364eA1") # green, yellow, blue
+
+signif_colors = setNames(rev(c("#364eA1","#E8C51E","#53B848")), unique(mtx_voom_long2plot$contrast))
+
+mtx_voom_long2plot = mtx_voom_long2plot %>% 
+  left_join(mtx_voom_long2plot_Pvalues_long, by = c("contrast","gene"="ligand_receptor")) 
+# convert pvalues to asterisk code
+mtx_voom_long2plot$signif = ifelse(mtx_voom_long2plot$P.adj <= 0.001,"***",
+                                   ifelse(mtx_voom_long2plot$P.adj <= 0.01,"**",
+                                          ifelse(mtx_voom_long2plot$P.adj <= 0.05,"*","")))
+
+mtx_voom_long2plot_labels = mtx_voom_long2plot %>% 
+  dplyr::group_by(gene,contrast,contrast_strat) %>% 
+  dplyr::summarize(p.adj = min(P.adj)) %>%
+  mutate(signif = ifelse(p.adj <= 0.001,"***",
+                         ifelse(p.adj <= 0.01,"**",
+                                ifelse(p.adj <= 0.05,"*",""))))
+```
+
+```{r fig.width=14, fig.height=12}
+mtx_voom_long2plot$gene = gsub("—","-",mtx_voom_long2plot$gene)
+mtx_voom_long2plot_labels$gene = gsub("—","-",mtx_voom_long2plot_labels$gene)
+mtx_voom_long2plot_labels$gene = factor(mtx_voom_long2plot_labels$gene, 
+          levels = gsub("—","-",gene_list2))
+mtx_voom_long2plot$gene = factor(mtx_voom_long2plot$gene, 
+          levels = gsub("—","-",gene_list2))
+
+# mtx_voom_long2plot_labels$`.y.` = "expression"
+# mtx_voom_long2plot_labels$group1 = "glia-high"
+# mtx_voom_long2plot_labels$group1 = "glia-low"
+# mtx_voom_long2plot_labels$p = mtx_voom_long2plot_labels$p.adj
+# mtx_voom_long2plot_labels$`p.signif` = mtx_voom_long2plot_labels$signif
+# mtx_voom_long2plot_labels$contrast_strat = gsub("(.*)_(.*) \\((.*)","\\2",mtx_voom_long2plot_labels$contrast_strat)
+# mtx_voom_long2plot_labels = unique(mtx_voom_long2plot_labels)
+
+mtx_voom_long2plot$contrast = factor(mtx_voom_long2plot$contrast, 
+                                     levels = c("combined","low AB","high AB"))
+mtx_voom_long2plot$contrast_strat = factor(mtx_voom_long2plot$contrast_strat, 
+                                           levels = c("combined_glia-high (combined)",
+                                                      "combined_glia-low (combined)",
+                                                      "low AB_glia-high (low AB)",
+                                                      "low AB_glia-low (low AB)",
+                                                      "high AB_glia-high (high AB)",
+                                                      "high AB_glia-low (high AB)"))
+
+(p = ggplot(mtx_voom_long2plot, 
+            aes(x = contrast_strat, y = expression, fill = contrast)) +
+  geom_boxplot(outlier.shape = NA) + 
+  ggbeeswarm::geom_quasirandom(alpha = .2) + 
+  # stat_pvalue_manual(mtx_voom_long2plot_labels, label = "p.signif") +
+  geom_text(data = mtx_voom_long2plot_labels %>% filter(grepl("glia-high",contrast_strat)),
+            aes(label = signif,
+                x = stage(contrast_strat, after_stat = x + 0.45),
+                y = Inf),
+            color = "black",
+            hjust = 0.5, vjust = 1, size = 20/.pt) +
+  scale_x_discrete(labels = contrast_strat_labels) + 
+  scale_y_continuous(breaks = scales::breaks_extended(3)) +
+  scale_fill_manual(values = signif_colors) +
+  facet_wrap(~gene, ncol = 3, scales = "free") + 
+  theme_classic(base_size = 20) +
+  theme(panel.border = element_blank(),
+        axis.text.x = element_text(size = 14),
+        strip.text = element_text(size=20, colour="black",face = "italic"),
+        strip.background = element_rect(colour="white", fill="white")) +
+  easy_rotate_x_labels(angle = 20, side = "right") +
+  labs(y = "Normalized expression", x = "", fill = "") +
+  easy_move_legend(to = "bottom") + 
+  easy_change_legend(what = "direction", to = "horizontal"))
+
+pdf(file = paste0(work_dir,"/Figures/",figDir_id,"_GliaNet_LR_boxplots.pdf"), width = 14, height = 12)
+p
+dev.off()
+```
+
+## Session info
+
+```{r}
+sessionInfo()
+```

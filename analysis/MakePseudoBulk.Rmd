@@ -1,0 +1,405 @@
+---
+title: "AD_Spatial_Transcriptome"
+subtitle: "Script to make Pseudo-bulk matrices"
+author:  |
+ | Rush Alzheimer’s Disease Center
+ | Chicago, IL 60612
+date: "`r Sys.Date()`"
+output: 
+ rmarkdown::html_document:
+   theme: united
+   highlight: tango
+   code_folding: hide
+   toc: true
+   toc_float: true
+   df_print: paged
+   smooth_scroll: true
+   number_sections: false
+   self_contained: true  
+---
+
+```{r clean.variables, echo=FALSE}
+#This command clean all variables. BE CAREFULL!!! 
+rm(list = setdiff(ls(), lsf.str()))
+```
+
+```{r load.packages, echo=FALSE, message=FALSE, results='hide', warning=FALSE}
+library(Seurat)
+library(tidyverse)
+library(kableExtra)
+library(furrr)
+library(future)
+future::plan(multicore)
+
+knitr::opts_chunk$set( 
+  warning=FALSE,
+  message=FALSE)
+```
+
+```{r Helper Functions, echo=FALSE}
+createDT <- function(DF, caption="", scrollY=500){
+  data <- DT::datatable(DF, caption=caption,
+    extensions =  'Buttons',
+    options = list( dom = 'Bfrtip', 
+                    buttons = c('copy', 'csv', 'excel', 'pdf', 'print'), 
+                    scrollY = scrollY, scrollX=T, scrollCollapse = T, paging = F,  
+                      columnDefs = list(list(className = 'dt-center', targets = "_all"))
+    )
+  ) 
+   return(data)
+}
+
+make_pseudo_matrices <- function(metadata.filt, 
+                                 sample_ids,
+                                 outputRdata = paste0(work_dir,"pseudo_bulk/by_donor_section/",output_prefix,"_pseudo_counts.RData"),
+                                 nspots = 50){
+  read_by_donor <- function(sample){
+    #sample = "B16002"
+    cnt_file = data.df[data.df$sample_id == sample,]$file
+    suppressWarnings(dat <- data.table::fread(cnt_file) %>% as.data.frame())
+    
+    # Select spots to group (based on the column pseudo_by)
+    pseudo_groups = unique(metadata.filt$pseudo_by)
+    pseudo_counts = data.frame(row.names = dat$V1)
+    
+    for (pseudo_unit in pseudo_groups){
+      #pseudo_unit = pseudo_groups[1] # debug
+      metadata_subgroup = metadata.filt %>% filter(pseudo_by == pseudo_unit)
+      subset_idx = which(colnames(dat) %in% metadata_subgroup$barcode)
+      if (length(subset_idx)>=nspots){
+        cat("\n",paste("Sample:",sample,"Group by:",pseudo_unit,"NumSpots:",length(subset_idx)))
+        dat_subgroup = dat[, subset_idx, drop=F]
+        counts_subgroup = data.frame(id = rowSums(dat_subgroup, na.rm = T)) ### SUM over spots
+        colnames(counts_subgroup) <- paste0(pseudo_unit,"_",length(subset_idx))
+        pseudo_counts <- cbind(pseudo_counts, counts_subgroup) 
+      }
+    }
+    return(pseudo_counts)
+  }
+  pseudo_counts_list <- purrr::map(sample_ids, read_by_donor)
+  pseudo_counts = purrr::reduce(pseudo_counts_list, bind_cols) 
+  save(pseudo_counts_list,pseudo_counts, file = outputRdata)
+}
+
+make_pseudo_matrices_limma_residuals <- function(metadata.filt, 
+                                 sample_ids,
+                                 outputRdata = paste0(work_dir,"pseudo_bulk/by_donor_section/",output_prefix,"_pseudo_counts.RData"),
+                                 nspots = 50){
+  # This function will first regress layer in each section matrix
+  # Then it will apply stratification and pseudo-bulk summing the residuals 
+  library(limma)
+  
+  read_by_donor <- function(sample){
+    # Read each counts file (1 file for each donor)
+    #sample = "B16002"
+    cnt_file = data.df[data.df$sample_id == sample,]$file
+    suppressWarnings(dat <- data.table::fread(cnt_file) %>% as.data.frame())
+    # Counts table for the donor
+    pseudo_counts = data.frame(row.names = dat$V1)
+    # Metadata for the donor
+    metadata_donor = unique(metadata.filt[metadata.filt$Bnum == sample,c("barcode","section","annotated_clusters")])
+    
+    for (section in unique(metadata_donor$section)){
+      # Loop over sections of the selected donor
+      #section = unique(metadata_donor$section)[1]
+      # Create section specific metadata and counts table
+      metadata_section = unique(metadata_donor[metadata_donor$section == section,])
+      subset_section_idx = which(colnames(dat) %in% metadata_section$barcode)
+      dat_section = dat[, subset_section_idx, drop=F]
+      # Regress layer from the section counts table
+      residuals_matrix <- removeBatchEffect(dat_section, batch = metadata_section$annotated_clusters)
+      
+      # Select spots to group (based on the column pseudo_by)
+      pseudo_groups = unique(metadata.filt$pseudo_by)
+      for (pseudo_unit in pseudo_groups){
+        # Loop over stratification labels
+        #pseudo_unit = pseudo_groups[1] # debug
+        # Create strat metadata and residual counts table
+        metadata_subgroup = metadata.filt %>% filter(pseudo_by == pseudo_unit)
+        subset_idx = which(colnames(residuals_matrix) %in% metadata_subgroup$barcode)
+        if (length(subset_idx)>=nspots){ # Cutoff for grouping spots
+          cat("\n",paste("Sample:",sample,"Group by:",pseudo_unit,"NumSpots:",length(subset_idx)))
+          dat_subgroup = residuals_matrix[, subset_idx, drop=F]
+          # SUM over spots
+          counts_subgroup = data.frame(id = rowSums(dat_subgroup, na.rm = T)) 
+          # Make column name, keeping number of spots used in the grouping
+          colnames(counts_subgroup) <- paste0(pseudo_unit,"_",length(subset_idx))
+          # Add to the final table
+          pseudo_counts <- cbind(pseudo_counts, counts_subgroup) 
+        }
+      }
+    }
+    # Return donor specific pseudo-bulk table
+    return(pseudo_counts)
+  }
+  # Get a list of pseudo-bulk tables (1 for each donor)
+  pseudo_counts_list <- purrr::map(sample_ids, read_by_donor) 
+  # Merge tables 
+  pseudo_counts = purrr::reduce(pseudo_counts_list, bind_cols) 
+  # Save results
+  save(pseudo_counts_list,pseudo_counts, file = outputRdata)
+}
+
+make_pseudo_matrices_limma_residuals2 <- function(metadata.filt, 
+                                 sample_ids,
+                                 outputRdata = paste0(work_dir,"pseudo_bulk/by_donor_section/",output_prefix,"_pseudo_counts.RData"),
+                                 nspots = 50){
+  # This function will first regress layer in each section matrix
+  # Then it will apply stratification and pseudo-bulk summing the residuals 
+  library(limma)
+  
+  read_by_donor <- function(sample){
+    # Read each counts file (1 file for each donor)
+    #sample = "B16006"
+    cnt_file = data.df[data.df$sample_id == sample,]$file
+    suppressWarnings(dat <- data.table::fread(cnt_file) %>% as.data.frame())
+    # Counts table for the donor
+    pseudo_counts = data.frame(row.names = dat$V1)
+    # Metadata for the donor
+    metadata_donor = unique(metadata.filt[metadata.filt$Bnum == sample,c("barcode","section","annotated_clusters",
+                                                                         "log_amyloid_top","log_GFAP_top","log_IBA1_top",
+                                                                         "log_amyloid_bottom","log_GFAP_bottom","log_IBA1_bottom",
+                                                                         "log_amyloid_avg","log_GFAP_avg","log_IBA1_avg")])
+    
+    for (section in unique(metadata_donor$section)){
+      # Loop over sections of the selected donor
+      #section = unique(metadata_donor$section)[1]
+      # Create section specific metadata and counts table
+      metadata_section = unique(metadata_donor[metadata_donor$section == section,])
+      subset_section_idx = which(colnames(dat) %in% metadata_section$barcode)
+      dat_section = dat[, subset_section_idx, drop=F]
+      variables2keep = model.matrix.lm(~ log_amyloid_avg + log_GFAP_avg + log_IBA1_avg, metadata_section, na.action="na.pass")
+      variables2keep = variables2keep[ , colSums(is.na(variables2keep))==0]
+      # Regress layer from the section counts table
+      residuals_matrix <- removeBatchEffect(dat_section, batch = metadata_section$annotated_clusters, design = variables2keep)
+      
+      # Select spots to group (based on the column pseudo_by)
+      pseudo_groups = unique(metadata.filt$pseudo_by)
+      for (pseudo_unit in pseudo_groups){
+        # Loop over stratification labels
+        #pseudo_unit = pseudo_groups[1] # debug
+        # Create strat metadata and residual counts table
+        metadata_subgroup = metadata.filt %>% filter(pseudo_by == pseudo_unit)
+        subset_idx = which(colnames(residuals_matrix) %in% metadata_subgroup$barcode)
+        if (length(subset_idx)>=nspots){ # Cutoff for grouping spots
+          cat("\n",paste("Sample:",sample,"Group by:",pseudo_unit,"NumSpots:",length(subset_idx)))
+          dat_subgroup = residuals_matrix[, subset_idx, drop=F]
+          # SUM over spots
+          counts_subgroup = data.frame(id = rowSums(dat_subgroup, na.rm = T)) 
+          # Make column name, keeping number of spots used in the grouping
+          colnames(counts_subgroup) <- paste0(pseudo_unit,"_",length(subset_idx))
+          # Add to the final table
+          pseudo_counts <- cbind(pseudo_counts, counts_subgroup) 
+        }
+      }
+    }
+    # Return donor specific pseudo-bulk table
+    return(pseudo_counts)
+  }
+  # Get a list of pseudo-bulk tables (1 for each donor)
+  pseudo_counts_list <- purrr::map(sample_ids[1], read_by_donor) 
+  pseudo_counts_list <- purrr::map(sample_ids, read_by_donor) 
+  # Merge tables 
+  pseudo_counts = purrr::reduce(pseudo_counts_list, bind_cols) 
+  # Save results
+  save(pseudo_counts_list,pseudo_counts, file = outputRdata)
+}
+
+normalize_pseudo_matrices <- function(metadata.filt, 
+                                      inputRdata = paste0(work_dir,"pseudo_bulk/by_donor_section/",output_prefix,"_pseudo_counts.RData"), 
+                                      outputRdata = paste0(work_dir,"pseudo_bulk/by_donor_section/",output_prefix,"_","pseudo_counts_norm.RData"),
+                                      cpm_cutoff = 1,
+                                      cpm_sampleFrac = 0.8){
+  ## Perform normalization over pseudo-bulk matrices
+  load(inputRdata) # Load "pseudo_counts" 
+  library(edgeR)
+  # Create metadata at donor level
+  metadata_pseudo = unique(metadata.filt %>% dplyr::select(Bnum, RIN, age, ad_reagan, cogdx, diagnosis, cognition, PMI, amyloid, sample_id, librarybatch))
+  rownames(metadata_pseudo) = NULL
+  
+  counts = pseudo_counts
+  
+  # Filter genes by CPM
+  counts_cpm = as.data.frame(cpm(counts))
+  keep.exp <- rowSums(counts_cpm > 1) >= (cpm_sampleFrac * ncol(counts_cpm) )
+  counts_cpm_filt = counts_cpm[keep.exp,,drop=F]
+  counts_filt = counts[keep.exp,,drop=F] #14k genes
+  
+  # TMM-voom  
+  norm <- calcNormFactors(counts_filt, method = "TMM") 
+  dge = DGEList(counts_filt, norm.factors = norm)
+  counts_voom <- voom(dge)
+  tmm_voom <- as.data.frame(counts_voom$E)[,,drop=F]
+    
+  pseudo_counts_norm = list()
+  pseudo_counts_norm$raw_counts = counts
+  pseudo_counts_norm$counts = counts_filt
+  pseudo_counts_norm$cpm = counts_cpm_filt
+  pseudo_counts_norm$tmm_voom = tmm_voom
+  
+  save(metadata_pseudo, pseudo_counts_norm, file = outputRdata)
+}
+
+normalize_residual_pseudo_matrices <- function(metadata.filt, 
+                                      inputRdata = paste0(work_dir,"pseudo_bulk/by_donor_section/",output_prefix,"_pseudo_counts.RData"), 
+                                      outputRdata = paste0(work_dir,"pseudo_bulk/by_donor_section/",output_prefix,"_","pseudo_counts_norm.RData"),
+                                      cpm_cutoff = 1,
+                                      cpm_sampleFrac = 0.8){
+  ## Perform normalization over pseudo-bulk matrices
+  # The difference between this function and "normalize_pseudo_matrices" is that pseudo-bulk tables with counts < 0 are converted to 0
+  # This is proposed to deal with pseudo-bulk created using residualized counts (after adjusting for some covariate)
+  
+  load(inputRdata) # Load "pseudo_counts" 
+  library(edgeR)
+  # Create metadata at donor level
+  metadata_pseudo = unique(metadata.filt %>% dplyr::select(Bnum, RIN, age, ad_reagan, cogdx, diagnosis, cognition, PMI, amyloid, sample_id, librarybatch))
+  rownames(metadata_pseudo) = NULL
+  
+  counts = pseudo_counts
+  
+  # Filter genes by CPM
+  counts_cpm = as.data.frame(cpm(counts))
+  keep.exp <- rowSums(counts_cpm > cpm_cutoff) >= (cpm_sampleFrac * ncol(counts_cpm) )
+  counts_cpm_filt = counts_cpm[keep.exp,,drop=F]
+  counts_filt = counts[keep.exp,,drop=F] #14k genes
+  # Convert any negative value to 0
+  counts_filt[counts_filt<0] = 0
+  
+  # TMM-voom  
+  norm <- calcNormFactors(counts_filt, method = "TMM") 
+  dge = DGEList(counts_filt, norm.factors = norm)
+  counts_voom <- voom(dge)
+  tmm_voom <- as.data.frame(counts_voom$E)[,,drop=F]
+    
+  pseudo_counts_norm = list()
+  pseudo_counts_norm$raw_counts = counts
+  pseudo_counts_norm$counts = counts_filt
+  pseudo_counts_norm$cpm = counts_cpm_filt
+  pseudo_counts_norm$tmm_voom = tmm_voom
+  
+  save(metadata_pseudo, pseudo_counts_norm, file = outputRdata)
+}
+
+plot_exp_density_per_sample <- function(exp_matrix, title = "", subtitle = "", x_label = "value", color = "#4DBBD5FF"){
+  library(ggpubr)
+  library(viridis)
+  #exp_matrix <- cell_type$RPKM.cqn.log2
+  exp_matrix <- as.matrix(exp_matrix)
+  nsamples <- ncol(exp_matrix)
+  colfunc <- grDevices::colorRampPalette(c(color, alpha(color, 0.5)))
+  col = alpha(colfunc(nsamples), alpha = 0.1)
+  per_sample = reshape2::melt(exp_matrix)
+  density_p <- ggplot(per_sample, aes(x=value, color=as.factor(Var2))) + 
+    geom_density(show.legend = FALSE) + 
+    scale_fill_viridis_d() +
+    scale_color_manual(values=col) +
+    labs(x = x_label, y = "Density", title = title, subtitle = subtitle) +
+    theme_classic()
+  return(density_p)
+}
+```
+
+## Set parameters
+
+```{r}
+work_dir = "/pastel/Github_scripts/AD_Spatial_Transcriptome"
+data_folder = paste0(work_dir,"/data/alldata")
+metadata_file = paste0(work_dir,"/data/metadata.csv")
+strat_file = paste0(work_dir,"/data/strat.xlsx")
+
+path_to_save = paste0(work_dir,"/data/pseudo_bulk/")
+system(paste0("mkdir -p ", path_to_save))
+
+print(paste0("Results save to: ", path_to_save))
+```
+
+## Read files
+
+```{r}
+library(data.table)
+
+# Data files are the counts (or normalized counts) files for each individual. 
+data_files = list.files(path = data_folder, pattern = "raw*", full.names = T)
+
+# Match the metadata with the count tables 
+sample_id = gsub("(.*)_(.*)\\.csv","\\2",data_files)
+data.df = data.frame(sample_id = sample_id, file = data_files)
+```
+
+Number of spots by layer/brain region
+
+```{r}
+metadata = fread(metadata_file, sep = ",") %>% as.data.frame()
+table(distinct(metadata[,c("V1","annotated_clusters")])$annotated_clusters, useNA = "ifany")
+table(distinct(metadata[,c("V1","brainRegion")])$brainRegion, useNA = "ifany")
+```
+
+After merging with stratification tables
+
+```{r}
+if(endsWith(strat_file,"xlsx")){
+  df_strat = readxl::read_xlsx(strat_file)
+}else{
+  df_strat = fread(strat_file, sep = ",") %>% as.data.frame()
+}
+
+df_strat_m = df_strat %>% 
+  pivot_longer(cols = everything(), names_to = "strat", values_to = "barcode") %>% distinct()
+
+metadata_with_strat = metadata %>% inner_join(df_strat_m, by = c("cells"="barcode"))
+
+table(distinct(metadata_with_strat[,c("V1","sample_section","strat")])[,c("sample_section","strat")], useNA = "ifany")
+```
+
+## Make Pseudo-bulk matrices 
+
+Define here how to group spots into a pseudocount matrix. For example, if it just by donor, set `metadata$pseudo_by = metadata$projID`, if it's by donor AND region, set `metadata$pseudo_by = paste(metadata$projID,metadata$annotated_clusters, sep = "_")`. 
+
+Normal pseudo-bulk using SUM of stratified spots (50 spots min)
+
+```{r eval=T}
+pseudo_by_list = list(strats_50spots_all = c("sample_section", "strat"),
+                      strats_50spots_byRegion = c("sample_section", "strat", "brainRegion"))
+metadata = metadata_with_strat
+for(i in 1:length(pseudo_by_list)){
+  # i=1
+  metadata.filt = metadata
+  output_prefix = names(pseudo_by_list)[i]
+  # Remove if empty or NA
+  toRemNA = rowSums(is.na(metadata.filt[,pseudo_by_list[[i]],drop=F ]), na.rm = T)>0
+  toRemEmpty = rowSums(metadata.filt[,pseudo_by_list[[i]],drop=F ]=="", na.rm = T)>0
+  metadata.filt = metadata.filt[!(toRemNA | toRemEmpty),]
+  # Make pseudo_by column 
+  metadata.filt$pseudo_by <- apply( metadata.filt[,pseudo_by_list[[i]],drop=F ] , 1 , paste , collapse = "_" )
+  #length(unique(metadata.filt$pseudo_by))
+
+  to_keep = names(table(metadata.filt$pseudo_by))[table(metadata.filt$pseudo_by)>=50] # useful when generating pseudo-bulk with spots as "samples"
+  metadata.filt = metadata.filt[metadata.filt$pseudo_by %in% to_keep,]
+  # Check the number of spots per donor/section 
+  #table(metadata.filt[,pseudo_by_list[[i]],drop=F])
+  # as.data.frame(table(metadata.filt[,pseudo_by_list[[i]],drop=F])) %>% filter(Freq > 0)
+  
+  # We will read each sample' counts table, and create pseudo-bulk tables for each desired group (e.g. donor).
+  make_pseudo_matrices(metadata.filt, data.df$sample_id, outputRdata = paste0(path_to_save,output_prefix,"_pseudo_counts.RData"), nspots = 1)
+  
+  # Create normalized matrices
+  normalize_pseudo_matrices(metadata.filt = metadata.filt, 
+                            inputRdata = paste0(path_to_save,output_prefix,"_pseudo_counts.RData"),
+                            outputRdata = paste0(path_to_save,output_prefix,"_pseudo_counts_norm.RData"))
+  
+  ## Make tables
+  load(file = paste0(path_to_save,output_prefix,"_pseudo_counts_norm.RData"))
+  table_norm <- as.data.frame(pseudo_counts_norm[["tmm_voom"]]) %>% rownames_to_column("gene")
+  data.table::fwrite(x = table_norm, sep = "\t", row.names = F, col.names = T, quote = F,
+                     file = paste0(path_to_save,output_prefix,".tmm_voom.tsv.gz"))
+  table_norm.cpm <- as.data.frame(pseudo_counts_norm[["cpm"]]) %>% rownames_to_column("gene")
+  data.table::fwrite(x = table_norm.cpm, sep = "\t", row.names = F, col.names = T, quote = F,
+            file = paste0(path_to_save,output_prefix,".cpm.tsv.gz"))
+}
+```
+
+## Session info
+
+```{r}
+sessionInfo()
+```

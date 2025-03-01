@@ -1,0 +1,12 @@
+name: root
+channels:
+- pytorch
+- defaults
+dependencies:
+- flask
+- faiss-gpu
+- cudatoolkit=10.0
+- pandas
+- scikit-learn
+- seaborn
+- jupyterlab
