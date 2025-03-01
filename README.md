@@ -29,9 +29,9 @@
 
 [`LMM plaque Glia niche analysis`](https://github.com/RushAlz/AD_Spatial_Transcriptome/tree/main/analysis/plaqueGliaNicheContrastLMM/)
 
-[`Niches A-beta`](https://github.com/RushAlz/AD_Spatial_Transcriptome/tree/main/analysis/Abeta_LRcomparison_GM.html)
+[`Niches A-beta`](https://rushalz.github.io/AD_Spatial_Transcriptome/analysis/Abeta_LRcomparison_GM.html)
 
-[`Niches glia`](https://github.com/RushAlz/AD_Spatial_Transcriptome/tree/main/analysis/GliaNetAbeta_LRcomparison_GM.html)
+[`Niches glia`](hhttps://rushalz.github.io/AD_Spatial_Transcriptome/analysis/GliaNetAbeta_LRcomparison_GM.html)
 
 ------------------------------------------------------------------------
 
